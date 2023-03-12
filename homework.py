@@ -11,18 +11,29 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG)
-
 PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-TELEGRAM_CHAT_ID = 280305615
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
 RETRY_PERIOD = 600
 ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
 HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
 timestamp = 1549962000
+
+ERROR_CHECK_TOKENS = 'Недоступна переменная окружения {}'
+DEBUG_SEND_MESSAGE = 'Сообщение отправлено'
+ERROR_SEND_MESSAGE = 'Сообщение не отправлено'
+API_NOT_AVAILABLE_GET_API_ANSWER = 'API-сервис недоступен'
+JSON_ERROR_GET_API_ANSWER = 'Ошибка преобразования ответа в JSON'
+REQUEST_API_GET_API_ANSWER = 'Произошла ошибка при выполнении запроса API: {}'
+EMPTY_API_CHECK_RESPONSE = 'В ответе API пусто'
+TYPE_ERROR_CHECK_RESPONSE = 'В ответе API передан не словарь'
+HOMEWORKS_TYPE_ERROR_CHECK_RESPONSE = ('В ответе API под ключом homeworks '
+                                       'данные приходят не в виде списка')
+STATUS_PARSE_STATUS = 'Изменился статус проверки работы "{}". {}'
+KEYERROR_PARSE_STATUS = 'Ключ homework_name не существует'
+EMPTY_MAIN = 'Список домшних заданий пуст'
+ERROR_MAIN = 'Сбой в работе программы: {}'
 
 HOMEWORK_VERDICTS = {
     'approved': 'Работа проверена: ревьюеру всё понравилось. Ура!',
@@ -35,50 +46,55 @@ logger = logging.getLogger(__name__)
 
 def check_tokens():
     """Проверка доступности переменных окружения."""
-    if (PRACTICUM_TOKEN is None
-       or TELEGRAM_TOKEN is None
-       or TELEGRAM_CHAT_ID is None):
-        logger.critical('Недоступны переменные окружения')
-        raise Exception
+    enviroments = {
+        'PRACTICUM_TOKEN': PRACTICUM_TOKEN,
+        'TELEGRAM_TOKEN': TELEGRAM_TOKEN,
+        'TELEGRAM_CHAT_ID': TELEGRAM_CHAT_ID,
+    }
+    for name, value in enviroments.items():
+        if value is None:
+            message = ERROR_CHECK_TOKENS
+            logger.critical(message.format(name))
+            raise Exception(message.format(name))
 
 
 def send_message(bot, message):
     """Отправляет сообщение в чат."""
     try:
         bot.send_message(TELEGRAM_CHAT_ID, message)
-    except Exception as error:
-        logging.error(error)
-    else:
-        logger.debug('Сообщение отправлено')
+        logger.debug(DEBUG_SEND_MESSAGE)
+    except Exception:
+        logger.error(ERROR_SEND_MESSAGE)
 
 
 def get_api_answer(timestamp):
     """Запрос к единственному эндпоинту API-сервиса."""
     try:
-        payload = {'from_date': timestamp}
         homework_statuses = requests.get(
-            ENDPOINT, headers=HEADERS, params=payload
+            ENDPOINT, headers=HEADERS, params={'from_date': timestamp}
         )
         response = homework_statuses.json()
         if homework_statuses.status_code != HTTPStatus.OK:
-            message = 'API-сервис недоступен'
+            message = API_NOT_AVAILABLE_GET_API_ANSWER
             raise Exception(message)
         return response
-    except Exception:
-        raise SystemError
+    except ValueError:
+        raise Exception(JSON_ERROR_GET_API_ANSWER)
+    except requests.RequestException as e:
+        message = REQUEST_API_GET_API_ANSWER
+        raise Exception(message.format(e))
 
 
 def check_response(response):
     """Проверка ответа API на соответствие документации."""
     if not response:
-        message = 'В ответе API пусто'
+        message = EMPTY_API_CHECK_RESPONSE
         raise Exception(message)
     if type(response) != dict:
-        message = 'В ответе API передан не словарь'
+        message = TYPE_ERROR_CHECK_RESPONSE
         raise TypeError(message)
     if not isinstance(response.get('homeworks'), list):
-        message = ('В ответе API под ключом homeworks данные '
-                   'приходят не в виде списка')
+        message = HOMEWORKS_TYPE_ERROR_CHECK_RESPONSE
         raise TypeError(message)
 
 
@@ -89,11 +105,12 @@ def parse_status(homework):
     """
     try:
         if 'homework_name' not in homework:
-            raise Exception
+            raise KeyError(KEYERROR_PARSE_STATUS)
         homework_name = homework.get('homework_name')
         verdict = homework.get('status')
-        return (f'Изменился статус проверки работы "{homework_name}". '
-                f'{HOMEWORK_VERDICTS[verdict]}')
+        return STATUS_PARSE_STATUS.format(
+            homework_name, HOMEWORK_VERDICTS[verdict]
+        )
     except KeyError:
         raise KeyError
 
@@ -109,7 +126,7 @@ def main():
         check = get_api_answer(timestamp)
         check_response(check)
         if len(check.get('homeworks')) == 0:
-            logging.error('Список домшних заданий пуст')
+            logger.error(EMPTY_MAIN)
             break
         check = check.get('homeworks')[0]
         new_response = parse_status(check)
@@ -117,12 +134,19 @@ def main():
             try:
                 send_message(bot, new_response)
             except Exception as error:
-                message = f'Сбой в работе программы: {error}'
-                logging.error(message)
+                message = ERROR_MAIN.format(error)
+                logger.error(message)
 
         prev_response = new_response
         time.sleep(RETRY_PERIOD)
 
 
 if __name__ == '__main__':
+    logging.basicConfig(
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        level=logging.INFO,
+        filename=os.path.join(os.path.dirname(__file__), 'main.log'),
+        filemode='w',
+    )
+
     main()
