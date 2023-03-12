@@ -27,11 +27,12 @@ API_NOT_AVAILABLE_GET_API_ANSWER = 'API-сервис недоступен'
 JSON_ERROR_GET_API_ANSWER = 'Ошибка преобразования ответа в JSON'
 REQUEST_API_GET_API_ANSWER = 'Произошла ошибка при выполнении запроса API: {}'
 EMPTY_API_CHECK_RESPONSE = 'В ответе API пусто'
-TYPE_ERROR_CHECK_RESPONSE = 'В ответе API передан не словарь'
+TYPEERROR_CHECK_RESPONSE = 'В ответе API передан не словарь'
 HOMEWORKS_TYPE_ERROR_CHECK_RESPONSE = ('В ответе API под ключом homeworks '
                                        'данные приходят не в виде списка')
 STATUS_PARSE_STATUS = 'Изменился статус проверки работы "{}". {}'
-KEYERROR_PARSE_STATUS = 'Ключ homework_name не существует'
+KEYERROR_1_PARSE_STATUS = 'Ключ homework_name не существует'
+KEYERROR_2_PARSE_STATUS = 'Ключ status не существует'
 EMPTY_MAIN = 'Список домшних заданий пуст'
 ERROR_MAIN = 'Сбой в работе программы: {}'
 
@@ -75,27 +76,28 @@ def get_api_answer(timestamp):
         )
         response = homework_statuses.json()
         if homework_statuses.status_code != HTTPStatus.OK:
-            message = API_NOT_AVAILABLE_GET_API_ANSWER
-            raise Exception(message)
+            logger.error(API_NOT_AVAILABLE_GET_API_ANSWER)
+            raise Exception(API_NOT_AVAILABLE_GET_API_ANSWER)
         return response
     except ValueError:
+        logger.error(JSON_ERROR_GET_API_ANSWER)
         raise Exception(JSON_ERROR_GET_API_ANSWER)
     except requests.RequestException as e:
-        message = REQUEST_API_GET_API_ANSWER
-        raise Exception(message.format(e))
+        logger.error(REQUEST_API_GET_API_ANSWER)
+        raise Exception(REQUEST_API_GET_API_ANSWER.format(e))
 
 
 def check_response(response):
     """Проверка ответа API на соответствие документации."""
     if not response:
-        message = EMPTY_API_CHECK_RESPONSE
-        raise Exception(message)
+        logger.error(EMPTY_API_CHECK_RESPONSE)
+        raise Exception(EMPTY_API_CHECK_RESPONSE)
     if type(response) != dict:
-        message = TYPE_ERROR_CHECK_RESPONSE
-        raise TypeError(message)
+        logger.error(TYPEERROR_CHECK_RESPONSE)
+        raise TypeError(TYPEERROR_CHECK_RESPONSE)
     if not isinstance(response.get('homeworks'), list):
-        message = HOMEWORKS_TYPE_ERROR_CHECK_RESPONSE
-        raise TypeError(message)
+        logger.error(HOMEWORKS_TYPE_ERROR_CHECK_RESPONSE)
+        raise TypeError(HOMEWORKS_TYPE_ERROR_CHECK_RESPONSE)
 
 
 def parse_status(homework):
@@ -105,14 +107,16 @@ def parse_status(homework):
     """
     try:
         if 'homework_name' not in homework:
-            raise KeyError(KEYERROR_PARSE_STATUS)
+            logger.error(KEYERROR_1_PARSE_STATUS)
+            raise KeyError(KEYERROR_1_PARSE_STATUS)
         homework_name = homework.get('homework_name')
         verdict = homework.get('status')
         return STATUS_PARSE_STATUS.format(
             homework_name, HOMEWORK_VERDICTS[verdict]
         )
     except KeyError:
-        raise KeyError
+        logger.error(KEYERROR_2_PARSE_STATUS)
+        raise KeyError(KEYERROR_2_PARSE_STATUS)
 
 
 def main():
@@ -134,8 +138,7 @@ def main():
             try:
                 send_message(bot, new_response)
             except Exception as error:
-                message = ERROR_MAIN.format(error)
-                logger.error(message)
+                logger.error(ERROR_MAIN.format(error))
 
         prev_response = new_response
         time.sleep(RETRY_PERIOD)
@@ -143,7 +146,8 @@ def main():
 
 if __name__ == '__main__':
     logging.basicConfig(
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        format=('%(asctime)s - %(funcName)s - %(levelname)s'
+                ' - %(lineno)d - %(message)s'),
         level=logging.INFO,
         filename=os.path.join(os.path.dirname(__file__), 'main.log'),
         filemode='w',
