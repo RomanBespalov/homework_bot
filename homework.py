@@ -9,6 +9,8 @@ import os
 
 from dotenv import load_dotenv
 
+from exceptions import APIError
+
 load_dotenv()
 
 PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
@@ -18,7 +20,7 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 RETRY_PERIOD = 600
 ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
 HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
-timestamp = 1549962000
+timestamp = 0
 
 ERROR_CHECK_TOKENS = 'Недоступна переменная окружения {}'
 DEBUG_SEND_MESSAGE = 'Сообщение отправлено'
@@ -31,8 +33,7 @@ TYPEERROR_CHECK_RESPONSE = 'В ответе API передан не словар
 HOMEWORKS_TYPE_ERROR_CHECK_RESPONSE = ('В ответе API под ключом homeworks '
                                        'данные приходят не в виде списка')
 STATUS_PARSE_STATUS = 'Изменился статус проверки работы "{}". {}'
-KEYERROR_1_PARSE_STATUS = 'Ключ homework_name не существует'
-KEYERROR_2_PARSE_STATUS = 'Ключ status не существует'
+KEYERROR_PARSE_STATUS = 'Ключа {} не существует'
 EMPTY_MAIN = 'Список домшних заданий пуст'
 ERROR_MAIN = 'Сбой в работе программы: {}'
 
@@ -92,7 +93,7 @@ def check_response(response):
     if not response:
         logger.error(EMPTY_API_CHECK_RESPONSE)
         raise Exception(EMPTY_API_CHECK_RESPONSE)
-    if type(response) != dict:
+    if not isinstance(response, dict):
         logger.error(TYPEERROR_CHECK_RESPONSE)
         raise TypeError(TYPEERROR_CHECK_RESPONSE)
     if not isinstance(response.get('homeworks'), list):
@@ -107,16 +108,16 @@ def parse_status(homework):
     """
     try:
         if 'homework_name' not in homework:
-            logger.error(KEYERROR_1_PARSE_STATUS)
-            raise KeyError(KEYERROR_1_PARSE_STATUS)
+            logger.error(KEYERROR_PARSE_STATUS.format('homework_name'))
+            raise KeyError(KEYERROR_PARSE_STATUS.format('homework_name'))
         homework_name = homework.get('homework_name')
         verdict = homework.get('status')
         return STATUS_PARSE_STATUS.format(
             homework_name, HOMEWORK_VERDICTS[verdict]
         )
-    except KeyError:
-        logger.error(KEYERROR_2_PARSE_STATUS)
-        raise KeyError(KEYERROR_2_PARSE_STATUS)
+    except Exception:
+        logger.error(APIError.__doc__)
+        raise APIError(APIError.__doc__)
 
 
 def main():
@@ -124,22 +125,22 @@ def main():
     check_tokens()
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     prev_response = None
-
+    timestamp = int(time.time())
     while True:
-        timestamp = 1549962000
-        check = get_api_answer(timestamp)
-        check_response(check)
-        if len(check.get('homeworks')) == 0:
+        response = get_api_answer(timestamp)
+        if len(response.get('homeworks')) == 0:
             logger.error(EMPTY_MAIN)
             break
-        check = check.get('homeworks')[0]
-        new_response = parse_status(check)
+        response_homework = response.get('homeworks')[0]
+        new_response = parse_status(response_homework)
         if prev_response != new_response:
             try:
+                check_tokens()
+                check_response(response)
                 send_message(bot, new_response)
             except Exception as error:
                 logger.error(ERROR_MAIN.format(error))
-
+        timestamp = int(time.time())
         prev_response = new_response
         time.sleep(RETRY_PERIOD)
 
@@ -149,8 +150,12 @@ if __name__ == '__main__':
         format=('%(asctime)s - %(funcName)s - %(levelname)s'
                 ' - %(lineno)d - %(message)s'),
         level=logging.INFO,
-        filename=os.path.join(os.path.dirname(__file__), 'main.log'),
-        filemode='w',
+        handlers=[
+            logging.FileHandler(
+                os.path.join(os.path.dirname(__file__), 'main.log')
+            ),
+            logging.StreamHandler(),
+        ]
     )
 
     main()
